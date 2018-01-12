@@ -1,7 +1,7 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 using OpenTK;
-using OpenTK.Graphics;
-using OpenTK.Graphics.ES20;
+using OpenTK.Graphics.OpenGL;
 using OpenTK.Input;
 using SkiaSharp;
 
@@ -9,90 +9,167 @@ namespace SkiaSharpTextures
 {
 	public sealed class MainWindow : GameWindow
 	{
-		private int texture;
-
-		private GRGlInterface glInterface;
 		private GRContext context;
+
+		private int textureId;
+		private GCHandle textureHandle;
+		private GRBackendTextureDesc textureDesc;
+		private SKSurface textureSurface;
+
+		private GRBackendRenderTargetDesc renderDesc;
+		private SKSurface renderSurface;
+
+		private bool previousState;
 
 		public MainWindow()
 			: base(1280, 720)
 		{
-			Title = "SkiaSharpTextures - OpenGL Version: " + GL.GetString(StringName.Version);
+			Title = $"SkiaSharp Textures - OpenGL {GL.GetString(StringName.Version)}";
+
+			Load += OnLoad;
+			Resize += OnResize;
+			Unload += OnUnload;
+			UpdateFrame += OnUpdateFrame;
+			RenderFrame += OnRenderFrame;
 		}
 
-		protected override void OnResize(EventArgs e)
+		private void OnResize(object sender, EventArgs e)
 		{
 			GL.Viewport(0, 0, Width, Height);
 		}
 
-		protected override void OnLoad(EventArgs e)
+		private void OnLoad(object sender, EventArgs e)
 		{
 			CursorVisible = true;
 
-			glInterface = GRGlInterface.CreateNativeGlInterface();
+			// CONTEXT
+
+			// create the SkiaSharp context
+			var glInterface = GRGlInterface.CreateNativeGlInterface();
 			context = GRContext.Create(GRBackend.OpenGL, glInterface);
 
-			texture = GL.GenTexture();
+			// TEXTURE
+
+			// the texture size
+			var textureSize = new SKSizeI(256, 256);
+
+			// create the OpenGL texture
+			textureId = GL.GenTexture();
+			GL.BindTexture(TextureTarget.Texture2D, textureId);
+			GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, textureSize.Width, textureSize.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
+			GL.BindTexture(TextureTarget.Texture2D, 0);
+
+			// create the SkiaSharp texture description
+			var textureInfo = new GRGlTextureInfo
+			{
+				Id = (uint)textureId,
+				Target = (uint)TextureTarget.Texture2D
+			};
+			textureHandle = GCHandle.Alloc(textureInfo, GCHandleType.Pinned);
+			textureDesc = new GRBackendTextureDesc
+			{
+				Width = textureSize.Width,
+				Height = textureSize.Height,
+				Config = GRPixelConfig.Rgba8888,
+				Flags = GRBackendTextureDescFlags.RenderTarget,
+				Origin = GRSurfaceOrigin.TopLeft,
+				SampleCount = 0,
+				TextureHandle = textureHandle.AddrOfPinnedObject(),
+			};
+
+			// create the SkiaSharp texture surface
+			textureSurface = SKSurface.CreateAsRenderTarget(context, textureDesc);
+
+			// initialize the texture content
+			UpdateTexture(false);
+
+			// RENDER TARGET
+
+			// create the SkiaSharp render target description
+			renderDesc = new GRBackendRenderTargetDesc
+			{
+				RenderTargetHandle = (IntPtr)0,
+				Width = Width,
+				Height = Height,
+				Config = GRPixelConfig.Rgba8888,
+				Origin = GRSurfaceOrigin.TopLeft,
+				SampleCount = 0,
+				StencilBits = 0,
+			};
+
+			// create the SkiaSharp render target surface
+			renderSurface = SKSurface.Create(context, renderDesc);
 		}
 
-		protected override void OnRenderFrame(FrameEventArgs e)
+		private void OnUnload(object sender, EventArgs e)
 		{
-			Title = $"(Vsync: {VSync}) FPS: {1f / e.Time:0}";
+			textureSurface.Dispose();
+			textureSurface = null;
 
+			renderSurface.Dispose();
+			renderSurface = null;
 
+			context.Dispose();
+			context = null;
+
+			textureHandle.Free();
+		}
+
+		private void OnUpdateFrame(object sender, FrameEventArgs e)
+		{
+			var currentState = Mouse[MouseButton.Left];
+			if (previousState != currentState)
 			{
-				var desc = new GRBackendTextureDesc
-				{
-					Config = GRPixelConfig.Rgba8888,
-					Flags = GRBackendTextureDescFlags.RenderTarget,
-					Height = 480,
-					Origin = GRSurfaceOrigin.TopLeft,
-					SampleCount = 0,
-					TextureHandle = (IntPtr)texture,
-					Width = 640
-				};
+				UpdateTexture(currentState);
+			}
+			previousState = currentState;
+		}
 
-				using (var surface = SKSurface.CreateAsRenderTarget(context, desc))
-				{
-					surface.Canvas.Clear(SKColors.Green);
+		private void OnRenderFrame(object sender, FrameEventArgs e)
+		{
+			var renderCanvas = renderSurface.Canvas;
 
-					using (var paint = new SKPaint { IsAntialias = true, TextSize = 50, TextAlign = SKTextAlign.Center })
-					{
-						surface.Canvas.DrawText("Texture!", 320, 240 + 25, paint);
-					}
+			renderCanvas.Clear(SKColors.CornflowerBlue);
 
-					context.Flush();
-				}
+			using (var paint = new SKPaint { IsAntialias = true, TextSize = 100, TextAlign = SKTextAlign.Center })
+			{
+				renderCanvas.DrawText("Hello World!", renderDesc.Width / 2, 150, paint);
+			}
+			using (var paint = new SKPaint { IsAntialias = true, TextSize = 24, Typeface = SKTypeface.FromFamilyName(null, SKTypefaceStyle.Italic) })
+			{
+				renderCanvas.DrawText($"V-Sync: {VSync}", 16, 16 + paint.TextSize, paint);
+				renderCanvas.DrawText($"FPS: {1f / e.Time:0}", 16, 16 + paint.TextSize + 8 + paint.TextSize, paint);
 			}
 
+			renderCanvas.DrawSurface(textureSurface, (renderDesc.Width - textureDesc.Width) / 2, 200);
 
-			{
-				var desc = new GRBackendRenderTargetDesc
-				{
-					RenderTargetHandle = (IntPtr)0,
-					Width = 1280,
-					Height = 720,
-					Config = GRPixelConfig.Rgba8888,
-					Origin = GRSurfaceOrigin.TopLeft,
-					SampleCount = 0,
-					StencilBits = 0,
-				};
-
-				using (var surface = SKSurface.Create(context, desc))
-				{
-					surface.Canvas.Clear(SKColors.Red);
-
-					using (var paint = new SKPaint { IsAntialias = true, TextSize = 100, TextAlign = SKTextAlign.Center })
-					{
-						surface.Canvas.DrawText("Hello World!", 640, 360 + 50, paint);
-					}
-
-					context.Flush();
-				}
-			}
-
+			context.Flush();
 
 			SwapBuffers();
+		}
+
+		private void UpdateTexture(bool isDown)
+		{
+			var textureCanvas = textureSurface.Canvas;
+
+			textureCanvas.Clear(SKColors.SeaGreen);
+
+			using (var paint = new SKPaint { IsAntialias = true, TextSize = 32, TextAlign = SKTextAlign.Center })
+			{
+				var y = (textureDesc.Height + paint.TextSize) / 2;
+				textureCanvas.DrawText("Texture!", textureDesc.Width / 2, y, paint);
+
+				paint.Typeface = SKTypeface.FromFamilyName(null, SKTypefaceStyle.Italic);
+				textureCanvas.DrawText(isDown ? "(mouse down)" : "(try clicking)", textureDesc.Width / 2, y + paint.TextSize + 8, paint);
+			}
+
+			context.Flush();
+		}
+
+		public struct GRGlTextureInfo
+		{
+			public uint Target;
+			public uint Id;
 		}
 	}
 }
