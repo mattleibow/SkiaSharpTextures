@@ -166,6 +166,7 @@ namespace SkiaSharpTextures
 			context.Flush();
 		}
 
+		[StructLayout(LayoutKind.Sequential)]
 		public struct GRGlTextureInfo
 		{
 			public uint Target;
