@@ -12,7 +12,6 @@ namespace SkiaSharpTextures
 		private GRContext context;
 
 		private int textureId;
-		private GCHandle textureHandle;
 		private GRBackendTextureDesc textureDesc;
 		private SKSurface textureSurface;
 
@@ -65,7 +64,7 @@ namespace SkiaSharpTextures
 				Id = (uint)textureId,
 				Target = (uint)TextureTarget.Texture2D
 			};
-			textureHandle = GCHandle.Alloc(textureInfo, GCHandleType.Pinned);
+			var textureHandle = GCHandle.Alloc(textureInfo, GCHandleType.Pinned);
 			textureDesc = new GRBackendTextureDesc
 			{
 				Width = textureSize.Width,
@@ -79,6 +78,9 @@ namespace SkiaSharpTextures
 
 			// create the SkiaSharp texture surface
 			textureSurface = SKSurface.CreateAsRenderTarget(context, textureDesc);
+
+			// free the pinned GC handle when we are done
+			textureHandle.Free();
 
 			// initialize the texture content
 			UpdateTexture(false);
@@ -111,8 +113,6 @@ namespace SkiaSharpTextures
 
 			context.Dispose();
 			context = null;
-
-			textureHandle.Free();
 		}
 
 		private void OnUpdateFrame(object sender, FrameEventArgs e)
